@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 浮窗列表行是代码手写的，这些 id 只用来在 ViewHolder 里 findViewById -->
+<resources>
+    <item name="row_title" type="id" />
+    <item name="row_subtitle" type="id" />
+    <item name="row_code" type="id" />
+    <item name="row_favorite" type="id" />
+    <item name="panel_search" type="id" />
+    <item name="panel_empty" type="id" />
+    <item name="panel_list" type="id" />
+</resources>

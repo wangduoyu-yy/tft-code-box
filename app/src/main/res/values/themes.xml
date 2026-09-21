@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Compose 自己管 UI 主题，这里只需要一个不带 ActionBar 的壳，
+      用平台 Material 主题可以省掉 com.google.android.material 依赖。
+    -->
+    <style name="Theme.TftCodeBox" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/tft_bg</item>
+        <item name="android:statusBarColor">@color/tft_bg</item>
+        <item name="android:navigationBarColor">@color/tft_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <!-- 透明无界面，给 ClipboardActivity 用 -->
+    <style name="Theme.Transparent" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+</resources>

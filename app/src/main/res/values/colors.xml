@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 取自图标左上角的天空色，前景是满铺的，正常看不见，留着防某些启动器露边 -->
+    <color name="ic_launcher_background">#FF81CAD1</color>
+    <color name="tft_gold">#FFFFD54F</color>
+    <color name="tft_bg">#FF121216</color>
+</resources>
