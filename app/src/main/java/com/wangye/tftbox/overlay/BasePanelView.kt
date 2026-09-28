@@ -42,7 +42,7 @@ abstract class BasePanelView(
     private val disarmStop = Runnable {
         stopArmed = false
         if (::stopButton.isInitialized) {
-            stopButton.text = "关闭悬浮球"
+            stopButton.text = "隐藏悬浮球"
             stopButton.setTextColor(colors.textSub)
         }
     }
@@ -155,17 +155,17 @@ abstract class BasePanelView(
         }
 
         stopButton = TextView(context).apply {
-            text = "关闭悬浮球"
+            text = "隐藏悬浮球"
             setTextColor(colors.textSub)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             gravity = Gravity.CENTER
             setPadding(dp(14f), dp(9f), dp(14f), dp(9f))
             isClickable = true
             setOnClickListener {
-                Log.i(TAG, "点击「关闭悬浮球」 armed=$stopArmed")
+                Log.i(TAG, "点击「隐藏悬浮球」 armed=$stopArmed")
                 if (!stopArmed) {
                     stopArmed = true
-                    text = "再点一次确认关闭"
+                    text = "再点一次确认隐藏"
                     setTextColor(colors.danger)
                     postDelayed(disarmStop, 3000L)
                 } else {

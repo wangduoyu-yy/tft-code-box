@@ -101,7 +101,7 @@ class FloatingService : Service(), SudokuHintHost {
             return START_NOT_STICKY
         }
 
-        Log.i(TAG, "onStartCommand 进入，SDK=${Build.VERSION.SDK_INT}")
+        Log.i(TAG, "onStartCommand 进入，action=${intent?.action} SDK=${Build.VERSION.SDK_INT}")
 
         try {
             startForegroundCompat()
@@ -122,15 +122,18 @@ class FloatingService : Service(), SudokuHintHost {
     override fun onBind(intent: Intent?): IBinder? = null
 
     /**
-     * 用户把 App 从后台任务列表里划掉了 → 球也收掉。
+     * 用户把 App 从后台任务列表里划掉了 → 球收掉，但**服务不能停**。
      *
-     * 配合界面上的约定：App 活着就有球，App 划掉了就没球。
-     * 必须显式 stopSelf()，否则 START_STICKY 会让系统把服务重新拉起来，
-     * 用户会看到「明明退干净了球又自己冒出来」。
+     * 之前这里 stopSelf() 会把前台服务一起杀掉，进程随即降级为可回收，
+     * 三星的省电策略就会把整个进程（包括无障碍截图服务）一起杀掉 ——
+     * 用户看到的就是「截图服务过一会儿自己关了」。
+     *
+     * 现在只藏球不停服务：进程靠前台服务保命，无障碍服务才能一直活着。
+     * 想彻底退出用通知栏的「停止」按钮。
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
-        Log.i(TAG, "任务被移除，关闭悬浮球")
-        stopSelf()
+        Log.i(TAG, "任务被移除，隐藏悬浮球（服务保持运行）")
+        hideBallKeepAlive()
         super.onTaskRemoved(rootIntent)
     }
 
@@ -235,6 +238,12 @@ class FloatingService : Service(), SudokuHintHost {
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        val showBall = PendingIntent.getService(
+            this,
+            2,
+            Intent(this, FloatingService::class.java).setAction(ACTION_SHOW_BALL),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
         val stop = PendingIntent.getService(
             this,
             1,
@@ -247,6 +256,7 @@ class FloatingService : Service(), SudokuHintHost {
             .setContentTitle(getString(R.string.notif_title))
             .setContentText(getString(R.string.notif_text))
             .setContentIntent(openApp)
+            .addAction(0, "显示球", showBall)
             .addAction(0, getString(R.string.notif_action_stop), stop)
             .setOngoing(true)
             .setShowWhen(false)
@@ -452,14 +462,14 @@ class FloatingService : Service(), SudokuHintHost {
                 onCopy = { copyLineup(it) },
                 onClose = { hidePanel() },
                 onAddFromClipboard = { addFromClipboard() },
-                onStopService = { stopSelf() },
+                onStopService = { hideBallKeepAlive() },
             ).also { tftPanel = it }
 
             AppMode.SUDOKU -> SudokuPanelView(
                 context = this,
                 colors = colors,
                 onClose = { hidePanel() },
-                onStopService = { stopSelf() },
+                onStopService = { hideBallKeepAlive() },
                 host = this,
                 preset = sudokuOutcome,
             )
@@ -487,6 +497,24 @@ class FloatingService : Service(), SudokuHintHost {
         runCatching { windowManager.removeView(view) }
         // 注意：这里**不**清掉画面上那个高亮框。
         // 用户合上面板正是为了让开棋盘照着填，框得留着才有用。
+    }
+
+    /**
+     * 把球藏起来但不停服务。
+     *
+     * 用在「划掉后台任务」和「关闭悬浮球」两个场景：
+     * 前台服务必须继续活着，否则进程降级后会被三星省电策略回收，
+     * 连带把无障碍截图服务一起杀掉。想真正退出走通知栏的「停止」。
+     */
+    private fun hideBallKeepAlive() {
+        hidePanel()
+        highlightOverlay?.dismiss()
+        highlightOverlay = null
+        ballView?.let { runCatching { windowManager.removeView(it) } }
+        ballView = null
+        ballParams = null
+        ballAttached = false
+        // 不调 stopSelf()，让前台服务继续保活进程
     }
 
     // ── SudokuHintHost：数独面板跟服务的约定 ────────────────────
@@ -603,6 +631,7 @@ class FloatingService : Service(), SudokuHintHost {
         private const val CHANNEL_ID = "floating_ball"
         private const val NOTIFICATION_ID = 1001
         const val ACTION_STOP = "com.wangye.tftbox.action.STOP_FLOATING"
+        const val ACTION_SHOW_BALL = "com.wangye.tftbox.action.SHOW_BALL"
 
         /** 服务活着（onCreate 到 onDestroy 之间） */
         @Volatile
