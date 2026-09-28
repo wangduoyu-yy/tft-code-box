@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.wangye.tftbox.R
+import com.wangye.tftbox.hint.HintAccessibilityService
 import com.wangye.tftbox.overlay.FloatingService
 import com.wangye.tftbox.util.Perms
 import com.wangye.tftbox.util.Prefs
@@ -94,9 +95,12 @@ fun PermissionsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
 
     var autoStart by remember { mutableStateOf(Prefs.isAutoStart(context)) }
     var watchClipboard by remember { mutableStateOf(Prefs.isWatchClipboard(context)) }
+    var debugShot by remember { mutableStateOf(Prefs.isDebugShot(context)) }
 
     val themeMode by viewModel.themeMode.collectAsState()
     val paletteId by viewModel.paletteId.collectAsState()
+    val appMode by viewModel.appMode.collectAsState()
+    val accReady = remember(refreshKey) { HintAccessibilityService.isReady() }
 
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -133,7 +137,14 @@ fun PermissionsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
 
-            UsageCard()
+            SectionTitle("模式")
+
+            ModeCard(current = appMode, onPick = viewModel::setMode)
+
+            // 「怎么用」讲的是金铲铲那套流程，数独模式下没意义
+            if (appMode == AppMode.TFT) {
+                UsageCard()
+            }
 
             SectionTitle("开悬浮球之前")
 
@@ -230,6 +241,116 @@ fun PermissionsScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                     Prefs.setAutoStart(context, it)
                 },
             )
+
+            if (appMode == AppMode.SUDOKU) {
+                SectionTitle("数独提示")
+
+                PermissionRow(
+                    title = "截图服务",
+                    desc = if (!HintAccessibilityService.isSupported()) {
+                        "这个功能需要 Android 11 及以上，当前系统不支持。"
+                    } else {
+                        "点悬浮球时要看一眼屏幕才能算出下一步。开启后随时可用，不会弹窗。" +
+                            "本服务只截图，不读取界面内容，也不模拟任何操作。"
+                    },
+                    granted = accReady,
+                    actionLabel = "去开启",
+                    onAction = {
+                        openSafely(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    },
+                )
+
+                // 侧载安装的 App 在 Android 13+ 上默认被禁止开启无障碍，
+                // 用户会看到「系统已拒绝向此应用授权访问权限」，不解释清楚会以为是坏了
+                if (!accReady && HintAccessibilityService.isSupported()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                text = "开不了？可能需要先解锁「受限设置」",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                            )
+                            Text(
+                                text = "系统会拒绝对非应用商店安装的应用授权无障碍权限，并提示" +
+                                    "「系统已拒绝向此应用授权访问权限」。这不是坏了，是有个开关要手动开。",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                                lineHeight = 17.sp,
+                            )
+                            Text(
+                                text = "① 先在「辅助功能」里试着开一次（会失败，这步不能跳，" +
+                                    "安卓要求先尝试过，下面的菜单才会出现）\n" +
+                                    "② 到「设置 → 应用（应用程序）→ 本应用 → 右上角三个点」里找【允许受限制的设置】\n" +
+                                    "③ 再回去开一次，这次就成了",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                                lineHeight = 18.sp,
+                            )
+                            Text(
+                                text = "各品牌菜单名略有不同：三星是「应用程序」；小米是「应用设置 → 应用管理」；" +
+                                    "OPPO / vivo 是「应用管理」。",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp,
+                                lineHeight = 16.sp,
+                            )
+                        }
+                    }
+                }
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = "怎么用",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                        )
+                        listOf(
+                            "① 上面这个截图服务先开启",
+                            "② 进游戏打开棋盘，点悬浮球",
+                            "③ 它会自动找到棋盘，直接框出下一步该填哪里",
+                        ).forEach { StepLine(it) }
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = "不需要标定。棋盘尺寸（10×10、12×12、15×15…）会自动认出来。",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                        )
+                    }
+                }
+
+                SwitchRow(
+                    title = "开启 debug",
+                    desc = "识别失败时把那张截图存进相册（Pictures/TftBox），方便排查问题。" +
+                        "平时不用开，开了会一直往相册里塞图。",
+                    checked = debugShot,
+                    enabled = true,
+                    onCheckedChange = {
+                        debugShot = it
+                        Prefs.setDebugShot(context, it)
+                    },
+                )
+            }
 
             SectionTitle("外观")
 
@@ -427,6 +548,36 @@ private fun AppearanceCard(
                 text = "悬浮球和浮窗也会跟着换色。",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 11.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ModeCard(current: AppMode, onPick: (AppMode) -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(14.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AppMode.entries.forEach { mode ->
+                    ChoiceChip(
+                        text = "${mode.emoji} ${mode.label}",
+                        selected = mode.id == current.id,
+                        onClick = { onPick(mode) },
+                    )
+                }
+            }
+            Text(
+                text = "切换后进入对应界面。悬浮球两个模式都在，只是点开的内容不一样。",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
             )
         }
     }

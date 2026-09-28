@@ -13,8 +13,8 @@ android {
         applicationId = "com.wangye.tftbox"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.1.4"
+        versionCode = 28
+        versionName = "1.6.3"
     }
 
     buildTypes {
@@ -68,4 +68,7 @@ dependencies {
 
     // 悬浮面板用经典 View 实现（浮窗不跑 Compose 生命周期，更稳）
     implementation(libs.androidx.recyclerview)
+
+    // 求解器是纯逻辑，用 JVM 单测就能验，不必上真机
+    testImplementation(libs.junit)
 }

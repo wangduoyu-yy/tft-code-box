@@ -33,6 +33,8 @@ class BallView(
     var screenHeight: Int,
     private val onTap: () -> Unit,
     private val onPositionChanged: (x: Int, y: Int) -> Unit,
+    /** 长按 —— 数独模式下「点一下」是直接给提示不弹面板，「长按」才开面板 */
+    private val onLongPress: () -> Unit = {},
 ) : View(context) {
 
     private val windowManager = context.getSystemService(WindowManager::class.java)
@@ -56,6 +58,7 @@ class BallView(
 
     private var downRawX = 0f
     private var downRawY = 0f
+    private var downTime = 0L
     private var startX = 0
     private var startY = 0
     private var dragging = false
@@ -106,6 +109,7 @@ class BallView(
                 snapAnimator?.cancel()
                 downRawX = event.rawX
                 downRawY = event.rawY
+                downTime = System.currentTimeMillis()
                 startX = params.x
                 startY = params.y
                 dragging = false
@@ -131,7 +135,8 @@ class BallView(
                     snapToEdge()
                 } else {
                     performClick()
-                    onTap()
+                    val held = System.currentTimeMillis() - downTime
+                    if (held >= LONG_PRESS_MS) onLongPress() else onTap()
                 }
                 return true
             }
@@ -172,5 +177,9 @@ class BallView(
 
     private fun applyLayout() {
         runCatching { windowManager?.updateViewLayout(this, params) }
+    }
+
+    private companion object {
+        const val LONG_PRESS_MS = 450L
     }
 }

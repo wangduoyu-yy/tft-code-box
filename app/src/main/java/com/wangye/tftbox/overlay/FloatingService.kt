@@ -11,10 +11,15 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
 import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -24,6 +29,11 @@ import com.wangye.tftbox.MainActivity
 import com.wangye.tftbox.R
 import com.wangye.tftbox.TftApp
 import com.wangye.tftbox.data.Lineup
+import com.wangye.tftbox.hint.HintAccessibilityService
+import com.wangye.tftbox.hint.HintEngine
+import com.wangye.tftbox.nonogram.IntRect
+import com.wangye.tftbox.nonogram.NonogramSolver
+import com.wangye.tftbox.ui.AppMode
 import com.wangye.tftbox.util.Clip
 import com.wangye.tftbox.util.Perms
 import com.wangye.tftbox.util.Prefs
@@ -40,7 +50,7 @@ import kotlinx.coroutines.launch
  * Android 14 起前台服务必须声明类型，这里用 specialUse（悬浮窗不属于任何标准类型），
  * manifest 里对应声明了 FOREGROUND_SERVICE_SPECIAL_USE 权限。
  */
-class FloatingService : Service() {
+class FloatingService : Service(), SudokuHintHost {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val repository by lazy { (application as TftApp).repository }
@@ -48,7 +58,14 @@ class FloatingService : Service() {
     private lateinit var windowManager: WindowManager
     private var ballView: BallView? = null
     private var ballParams: WindowManager.LayoutParams? = null
-    private var panelView: PanelView? = null
+    private var panelView: BasePanelView? = null
+
+    /** 只有金铲铲模式的浮窗有列表，数据变化时要单独通知它刷新 */
+    private var tftPanel: TftPanelView? = null
+
+    // ── 数独提示相关 ────────────────────────────────────────────
+    private var highlightOverlay: HighlightOverlay? = null
+    private val hideHandler by lazy { Handler(Looper.getMainLooper()) }
 
     private var ballSize = 0
     private var screenWidth = 0
@@ -173,6 +190,8 @@ class FloatingService : Service() {
 
     override fun onDestroy() {
         hidePanel()
+        highlightOverlay?.dismiss()
+        highlightOverlay = null
         ballView?.let { runCatching { windowManager.removeView(it) } }
         runCatching { application.unregisterComponentCallbacks(configWatcher) }
         ballView = null
@@ -262,8 +281,9 @@ class FloatingService : Service() {
             params = params,
             screenWidth = screenWidth,
             screenHeight = screenHeight,
-            onTap = { togglePanel() },
-            onPositionChanged = { x, y -> Prefs.saveBallPos(this, x, y) }
+            onTap = { onBallTap() },
+            onPositionChanged = { x, y -> Prefs.saveBallPos(this, x, y) },
+            onLongPress = { onBallLongPress() },
         )
 
         val result = runCatching { windowManager.addView(view, params) }
@@ -285,12 +305,117 @@ class FloatingService : Service() {
 
     // ── 浮窗 ────────────────────────────────────────────────────
 
-    private fun togglePanel() {
-        if (panelView != null) hidePanel() else showPanel()
+    /**
+     * 点一下球。
+     *
+     * 数独模式下**只把提示框在画面上，不弹面板** —— 面板会把棋盘挡住，
+     * 每次看完还得手动关，正玩着很碍事。想开面板长按球就行。
+     *
+     * 框着的时候再点一下就关掉，所以是个开关：
+     *   点 → 框出来；再点 → 关掉；再点 → 重新读一次、框新的。
+     */
+    private fun onBallTap() {
+        if (panelView != null) {
+            hidePanel()
+            return
+        }
+        if (AppMode.from(Prefs.appMode(this)) == AppMode.SUDOKU) {
+            if (highlightOverlay?.isShowing == true) {
+                highlightOverlay?.dismiss()
+            } else {
+                quickHint()
+            }
+        } else {
+            showPanel(null)
+        }
     }
 
-    private fun showPanel() {
+    /** 长按球 = 开面板（两个模式一样） */
+    private fun onBallLongPress() {
+        if (panelView != null) hidePanel() else showPanel(null)
+    }
+
+    /**
+     * 快速提示：截图 → 算 → 框出来。
+     *
+     * 全程不弹面板，只有「读不出来」才弹出来说原因 —— 那种情况光在画面上看
+     * 不出发生了什么。截图前要把球藏起来，否则球会盖住棋盘右边缘。
+     */
+    private fun quickHint() {
+        ballView?.visibility = View.INVISIBLE
+        highlightOverlay?.dismiss()
+
+        HintEngine.request(this) { outcome ->
+            ballView?.visibility = View.VISIBLE
+            when (outcome) {
+                is HintEngine.Outcome.Ok -> renderQuickHints(outcome)
+
+                is HintEngine.Outcome.Conflict -> {
+                    showHighlight(conflictCells(outcome.gridRect, outcome.cellPitch, outcome.suspects))
+                    toast("有 ${outcome.suspects.size} 处可能填错了，已在画面上标红（长按球看详情）")
+                }
+
+                is HintEngine.Outcome.Failed -> showPanel(outcome)
+            }
+        }
+    }
+
+    private fun renderQuickHints(ok: HintEngine.Outcome.Ok) {
+        when {
+            ok.solved -> toast("这盘已经填完了")
+
+            ok.hints.isEmpty() && ok.ambiguous -> toast("推不出来了，这一步得猜")
+
+            ok.hints.isEmpty() -> toast("暂时没有新进展")
+
+            else -> {
+                val shown = ok.hints.take(MAX_QUICK_HIGHLIGHT)
+                showHighlight(hintCells(ok.gridRect, ok.cellPitch, shown))
+                toast(
+                    if (ok.hints.size == 1) "下一步已框出"
+                    else "共 ${ok.hints.size} 处可确定，已框出 ${shown.size} 处"
+                )
+            }
+        }
+    }
+
+    private fun hintCells(
+        rect: IntRect,
+        pitch: Float,
+        hints: List<NonogramSolver.Hint>,
+    ): List<HighlightCell> = hints.map { h ->
+        HighlightCell(
+            RectF(
+                rect.left + h.col * pitch,
+                rect.top + h.row * pitch,
+                rect.left + (h.col + 1) * pitch,
+                rect.top + (h.row + 1) * pitch,
+            ),
+            filled = h.filled,
+        )
+    }
+
+    private fun conflictCells(
+        rect: IntRect,
+        pitch: Float,
+        cells: List<Pair<Int, Int>>,
+    ): List<HighlightCell> = cells.take(MAX_QUICK_HIGHLIGHT).map { (r, c) ->
+        HighlightCell(
+            RectF(
+                rect.left + c * pitch,
+                rect.top + r * pitch,
+                rect.left + (c + 1) * pitch,
+                rect.top + (r + 1) * pitch,
+            ),
+            conflict = true,
+        )
+    }
+
+    private fun showPanel(sudokuOutcome: HintEngine.Outcome? = null) {
         if (panelView != null) return
+
+        // 上一次的高亮框先撤掉 —— 马上要重新读一次，会用新的替换
+        highlightOverlay?.dismiss()
 
         val panelWidth = minOf((screenWidth * 0.9f).toInt(), dp(380f))
         val panelHeight = (screenHeight * 0.62f).toInt()
@@ -317,14 +442,28 @@ class FloatingService : Service() {
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
         }
 
-        val view = PanelView(
-            context = this,
-            colors = OverlayColors.resolve(this),
-            onCopy = { copyLineup(it) },
-            onClose = { hidePanel() },
-            onAddFromClipboard = { addFromClipboard() },
-            onStopService = { stopSelf() },
-        )
+        val colors = OverlayColors.resolve(this)
+
+        // 外壳一样，内容按模式换 —— 数独那边现在还是占位
+        val view: BasePanelView = when (AppMode.from(Prefs.appMode(this))) {
+            AppMode.TFT -> TftPanelView(
+                context = this,
+                colors = colors,
+                onCopy = { copyLineup(it) },
+                onClose = { hidePanel() },
+                onAddFromClipboard = { addFromClipboard() },
+                onStopService = { stopSelf() },
+            ).also { tftPanel = it }
+
+            AppMode.SUDOKU -> SudokuPanelView(
+                context = this,
+                colors = colors,
+                onClose = { hidePanel() },
+                onStopService = { stopSelf() },
+                host = this,
+                preset = sudokuOutcome,
+            )
+        }
 
         if (!runCatching { windowManager.addView(view, params) }.isSuccess) return
 
@@ -333,16 +472,64 @@ class FloatingService : Service() {
         view.alpha = 0f
         view.animate().alpha(1f).setDuration(140L).start()
 
-        scope.launch {
-            val list = runCatching { repository.getAll() }.getOrDefault(emptyList())
-            panelView?.setData(list)
+        // 先铺一次当前数据，之后的增量交给 observeLineups
+        (view as? TftPanelView)?.let { tft ->
+            scope.launch {
+                tft.setData(runCatching { repository.getAll() }.getOrDefault(emptyList()))
+            }
         }
     }
 
     private fun hidePanel() {
         val view = panelView ?: return
         panelView = null
+        tftPanel = null
         runCatching { windowManager.removeView(view) }
+        // 注意：这里**不**清掉画面上那个高亮框。
+        // 用户合上面板正是为了让开棋盘照着填，框得留着才有用。
+    }
+
+    // ── SudokuHintHost：数独面板跟服务的约定 ────────────────────
+
+    /**
+     * 面板请宿主去读一次棋盘。
+     *
+     * **必须先把面板和球藏起来再截图** —— 不然截出来的图里全是自己，
+     * 棋盘被挡得严严实实。读完再放回去。
+     */
+    override fun requestHint(onResult: (HintEngine.Outcome) -> Unit) {
+        val panel = panelView
+        val ball = ballView
+        panel?.visibility = View.INVISIBLE
+        ball?.visibility = View.INVISIBLE
+        highlightOverlay?.dismiss()
+
+        // 改 visibility 只是让它别画，真正重绘要等下一帧。
+        // 立刻截图的话，画面里可能还留着面板 —— 棋盘照样找不到。
+        hideHandler.postDelayed({
+            HintEngine.request(this) { outcome ->
+                panel?.visibility = View.VISIBLE
+                ball?.visibility = View.VISIBLE
+                onResult(outcome)
+            }
+        }, HIDE_SETTLE_MS)
+    }
+
+    override fun showHighlight(cells: List<HighlightCell>) {
+        val overlay = highlightOverlay ?: HighlightOverlay(this, OverlayColors.resolve(this).accent)
+            .also { highlightOverlay = it }
+        overlay.show(cells)
+    }
+
+    override fun hideHighlight() {
+        highlightOverlay?.dismiss()
+    }
+
+    override fun openAccessibilitySettings() {
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { startActivity(intent) }
+            .onFailure { toast("打不开系统设置，请手动到「无障碍」里开启") }
     }
 
     // ── 复制 ────────────────────────────────────────────────────
@@ -400,7 +587,7 @@ class FloatingService : Service() {
     private fun observeLineups() {
         scope.launch {
             runCatching {
-                repository.observeAll().collect { list -> panelView?.setData(list) }
+                repository.observeAll().collect { list -> tftPanel?.setData(list) }
             }
         }
     }
@@ -442,5 +629,11 @@ class FloatingService : Service() {
         fun stop(context: Context) {
             context.stopService(Intent(context, FloatingService::class.java))
         }
+
+        /** 藏起浮窗后等多久再截图，留出重绘的时间 */
+        private const val HIDE_SETTLE_MS = 180L
+
+        /** 快速提示一次最多框几格。框太多整屏都是，反而看不清 */
+        private const val MAX_QUICK_HIGHLIGHT = 6
     }
 }

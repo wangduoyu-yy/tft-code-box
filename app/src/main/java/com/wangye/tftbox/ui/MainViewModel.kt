@@ -29,6 +29,23 @@ class MainViewModel(private val app: Application) : ViewModel() {
         combine(repository.observeAll(), query) { list, q -> filterList(list, q) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    // ── 模式 ────────────────────────────────────────────────────
+    // 决定进哪个界面，以及浮窗里放什么内容。
+
+    private val _appMode = MutableStateFlow(AppMode.from(Prefs.appMode(app)))
+    val appMode: StateFlow<AppMode> = _appMode.asStateFlow()
+
+    /** 从没选过模式 → 先弹选择页 */
+    private val _needModeChoice = MutableStateFlow(!Prefs.isModeChosen(app))
+    val needModeChoice: StateFlow<Boolean> = _needModeChoice.asStateFlow()
+
+    fun setMode(mode: AppMode) {
+        Prefs.setAppMode(app, mode.id)
+        Prefs.setModeChosen(app, true)
+        _appMode.value = mode
+        _needModeChoice.value = false
+    }
+
     // ── 外观 ────────────────────────────────────────────────────
     // 主题要包在最外层 MaterialTheme 上，所以状态提到这里，
     // 设置页改完立刻全局生效，不用重启。

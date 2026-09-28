@@ -5,4 +5,7 @@
     <string name="notif_title">悬浮球已开启</string>
     <string name="notif_text">点一下球即可查看阵容、复制阵容码</string>
     <string name="notif_action_stop">关闭悬浮球</string>
+
+    <string name="acc_service_summary">截图识别棋盘，给出下一步提示</string>
+    <string name="acc_service_desc">开启后，点悬浮球即可看一眼当前棋盘并算出下一步该走哪。本服务只做截图，不读取界面内容，也不模拟任何操作。</string>
 </resources>

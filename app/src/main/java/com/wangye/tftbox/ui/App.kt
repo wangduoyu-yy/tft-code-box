@@ -73,6 +73,37 @@ fun AppRoot(
     sharedText: MutableStateFlow<String?>,
     clipboardText: StateFlow<String?>,
 ) {
+    val needModeChoice by viewModel.needModeChoice.collectAsState()
+    val appMode by viewModel.appMode.collectAsState()
+
+    // 第一次打开先让用户挑一个模式，选完记住，之后不再打扰
+    if (needModeChoice) {
+        ModeChooserScreen(onPick = viewModel::setMode)
+        return
+    }
+
+    when (appMode) {
+        AppMode.TFT -> TftRoot(viewModel, sharedText, clipboardText)
+
+        AppMode.SUDOKU -> {
+            var showSettings by remember { mutableStateOf(false) }
+            BackHandler(enabled = showSettings) { showSettings = false }
+            if (showSettings) {
+                PermissionsScreen(viewModel = viewModel, onBack = { showSettings = false })
+            } else {
+                SudokuScreen(onOpenSettings = { showSettings = true })
+            }
+        }
+    }
+}
+
+/** 金铲铲模式下的界面树。原来整个 AppRoot 就是它。 */
+@Composable
+private fun TftRoot(
+    viewModel: MainViewModel,
+    sharedText: MutableStateFlow<String?>,
+    clipboardText: StateFlow<String?>,
+) {
     var screen by remember { mutableStateOf<Screen>(Screen.List) }
     var suggestion by remember { mutableStateOf<LineupShareParser.Parsed?>(null) }
 

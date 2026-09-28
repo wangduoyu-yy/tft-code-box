@@ -70,6 +70,23 @@
             android:taskAffinity=""
             android:theme="@style/Theme.Transparent" />
 
+        <!--
+          只用来截图的无障碍服务。数独提示需要随时看一眼屏幕，
+          MediaProjection 每次都要用户确认，玩一局点十几次没法用。
+        -->
+        <service
+            android:name=".hint.HintAccessibilityService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/hint_accessibility" />
+        </service>
+
         <receiver
             android:name=".overlay.BootReceiver"
             android:enabled="true"
